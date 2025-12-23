@@ -1,3 +1,5 @@
-flask==3.0.0
-selenium==4.16.0
-gunicorn==21.2.0
+flask
+selenium
+webdriver-manager
+gunicorn
+packaging
