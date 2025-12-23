@@ -13,27 +13,43 @@ from selenium.webdriver.common.by import By
 
 app = Flask(__name__)
 
-# --- CONFIGURAÇÃO DO DRIVER OTIMIZADA ---
+# --- CONFIGURAÇÃO DO DRIVER OTIMIZADA (MODO TURBO) ---
 def get_driver():
     chrome_options = webdriver.ChromeOptions()
+    
+    # 1. Configurações Básicas para Servidor
     chrome_options.add_argument("--headless=new") 
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # ESTRATÉGIA DE CARREGAMENTO RÁPIDO (Isso evita Timeout)
-    # 'eager': O Selenium interage assim que o HTML carrega, sem esperar imagens pesadas.
+    # 2. BLOQUEIO DE IMAGENS E CSS (Acelera muito a busca)
+    prefs = {
+        "profile.managed_default_content_settings.images": 2,       # Bloqueia Imagens
+        "profile.managed_default_content_settings.stylesheets": 2,  # Bloqueia Estilos (CSS)
+        "profile.managed_default_content_settings.fonts": 2,        # Bloqueia Fontes
+        "profile.default_content_setting_values.notifications": 2,  # Bloqueia Notificações
+        "profile.managed_default_content_settings.popups": 2,       # Bloqueia Popups
+    }
+    chrome_options.add_experimental_option("prefs", prefs)
+    
+    # 3. Estratégia de Carregamento "Ansiosa"
+    # Não espera carregar scripts pesados de fundo, libera o robô assim que o HTML chega.
     chrome_options.page_load_strategy = 'eager'
 
+    # 4. Caminho do Chrome no Render
     if os.environ.get('RENDER'):
         chrome_binary_path = os.path.join(os.getcwd(), "chrome/opt/google/chrome/google-chrome")
         chrome_options.binary_location = chrome_binary_path
-        service = Service() # No Render, deixa ele gerenciar o serviço
+        service = Service() # Selenium Manager cuida do driver
     else:
-        # Localmente (no seu PC), usa o gerenciador padrão se tiver, ou deixa vazio
-        from webdriver_manager.chrome import ChromeDriverManager
-        service = Service(ChromeDriverManager().install())
+        # Fallback para rodar no seu computador (se tiver webdriver-manager instalado)
+        try:
+            from webdriver_manager.chrome import ChromeDriverManager
+            service = Service(ChromeDriverManager().install())
+        except:
+            service = Service()
     
     return webdriver.Chrome(service=service, options=chrome_options)
 
@@ -44,7 +60,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BD Manager - Web</title>
+    <title>BD Manager - Web Turbo</title>
     <style>
         body { background-color: #121212; color: white; font-family: sans-serif; text-align: center; padding: 20px; }
         .card { background-color: #252525; padding: 20px; margin: 15px auto; max-width: 500px; border-radius: 10px; border: 1px solid #333; }
@@ -55,16 +71,20 @@ HTML_TEMPLATE = """
         button { background-color: #E63946; color: white; font-weight: bold; cursor: pointer; transition: 0.3s; }
         button:hover { background-color: #C42B37; }
         .note { font-size: 0.8em; color: #aaa; margin-top: 5px; }
-        .loading { display: none; color: #E63946; font-weight: bold; margin-top: 10px;}
+        .loading { display: none; color: #ffeb3b; font-weight: bold; margin-top: 15px; animation: piscar 1.5s infinite;}
+        @keyframes piscar { 0% {opacity: 1;} 50% {opacity: 0.5;} 100% {opacity: 1;} }
     </style>
     <script>
         function showLoading() {
             document.getElementById('loading-msg').style.display = 'block';
+            document.getElementById('btn-buscar').innerText = "BUSCANDO... AGUARDE";
+            document.getElementById('btn-buscar').disabled = true;
+            document.getElementById('btn-buscar').style.backgroundColor = "#555";
         }
     </script>
 </head>
 <body>
-    <h1>BD MANAGER <span style="font-size:12px">WEB</span></h1>
+    <h1>BD MANAGER <span style="font-size:12px">TURBO</span></h1>
 
     <div class="card">
         <h2>1. Nova Coleta</h2>
@@ -74,9 +94,9 @@ HTML_TEMPLATE = """
                 <label>Páginas:</label>
                 <input type="number" name="paginas" value="2" min="1" max="5" style="width: 60px;">
             </div>
-            <button type="submit">🔍 BUSCAR E BAIXAR JSON</button>
-            <p class="note">Isso pode levar até 1 minuto. Não feche.</p>
-            <p id="loading-msg" class="loading">⏳ Processando... Aguarde...</p>
+            <button type="submit" id="btn-buscar">🚀 BUSCAR RÁPIDO</button>
+            <p class="note">O robô está em modo rápido (sem imagens).</p>
+            <p id="loading-msg" class="loading">⏳ Processando... Isso leva cerca de 30-60 segundos.</p>
         </form>
     </div>
 
@@ -104,7 +124,6 @@ HTML_TEMPLATE = """
 def index():
     return render_template_string(HTML_TEMPLATE)
 
-# Alteração: Aceita GET também para evitar erro 405 se recarregar
 @app.route('/coletar', methods=['GET', 'POST'])
 def rota_coleta():
     if request.method == 'GET':
@@ -121,16 +140,17 @@ def rota_coleta():
         driver = get_driver()
         url = f"https://www.leomadeiras.com.br/busca?q={termo}"
         driver.get(url)
-        # Espera fixa menor porque estamos usando modo 'eager'
-        time.sleep(3)
+        
+        # Tempo reduzido (sem imagens carrega rápido)
+        time.sleep(1.5)
         
         ids_vistos = set()
         
         for p in range(paginas):
-            # Scroll mais suave para garantir carregamento dos itens
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight/3);")
-            time.sleep(1)
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight/1.5);")
+            # Scroll rápido
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+            time.sleep(0.5)
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(1)
 
             links = driver.find_elements(By.XPATH, "//a[contains(@href, '/p/')]")
@@ -145,7 +165,7 @@ def rota_coleta():
                     match = re.search(r'/p/(\d+)', href)
                     codigo = match.group(1) if match else "S/C"
                     
-                    # Tenta pegar o nome
+                    # Tenta pegar o nome (Texto direto é mais rápido que atributo)
                     nome = link.text
                     if not nome:
                         try: nome = link.find_element(By.TAG_NAME, "img").get_attribute("alt")
@@ -156,7 +176,6 @@ def rota_coleta():
                         bloco = link.find_element(By.XPATH, "./ancestor::div[3]")
                         texto_bloco = bloco.text
                         if "R$" in texto_bloco:
-                            # Lógica simplificada para pegar preço
                             linhas = texto_bloco.split('\n')
                             for linha in linhas:
                                 if "R$" in linha and "à vista" not in linha:
@@ -173,13 +192,13 @@ def rota_coleta():
                     })
                 except: continue
             
-            # Tenta ir para a próxima página
+            # Paginação
             if p < paginas - 1:
                 try:
                     prox = driver.find_elements(By.XPATH, f"//a[text()='{p+2}']")
                     if prox: 
                         driver.execute_script("arguments[0].click();", prox[0])
-                        time.sleep(3)
+                        time.sleep(2) # Tempo seguro para troca de página
                     else: break
                 except: break
             
@@ -187,7 +206,7 @@ def rota_coleta():
         return f"<h1>Erro técnico:</h1><p>{str(e)}</p><a href='/'>Voltar</a>"
     finally:
         if driver: 
-            driver.quit() # Garante que o Chrome fecha para liberar memória
+            driver.quit()
 
     if produtos:
         buffer = io.BytesIO()
@@ -211,15 +230,17 @@ def rota_atualizar():
         dados = json.load(arquivo)
         driver = get_driver()
         
-        # Limita atualização para não estourar o tempo (Max 20 itens por vez no plano grátis)
-        # Se quiser mais, teria que rodar localmente
+        # Limite de segurança para plano gratuito (evita timeout de 2min)
+        limite_itens = 40 
         contador = 0
+        
         for produto in dados:
-            if contador > 30: break # Segurança anti-timeout
+            if contador >= limite_itens: break
             try:
                 driver.get(produto['link'])
                 try:
-                    wait = webdriver.support.ui.WebDriverWait(driver, 5)
+                    # Espera muito curta pois CSS/IMG estão bloqueados
+                    wait = webdriver.support.ui.WebDriverWait(driver, 3)
                     preco_el = wait.until(lambda d: d.find_element(By.CLASS_NAME, "vtex-store-components-3-x-currencyContainer"))
                     produto['preco'] = preco_el.text
                     produto['data_update'] = datetime.now().strftime("%d/%m/%Y")
