@@ -1,5 +1,4 @@
 flask
-selenium
-webdriver-manager
-gunicorn
+selenium>=4.16.0
 packaging
+gunicorn
