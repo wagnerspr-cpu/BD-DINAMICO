@@ -5,51 +5,43 @@ import re
 import io
 from datetime import datetime
 from flask import Flask, render_template_string, request, send_file, redirect, url_for
+from bs4 import BeautifulSoup # Biblioteca nova para ler rápido
 
 # Selenium Imports
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
 
 app = Flask(__name__)
 
-# --- CONFIGURAÇÃO DO DRIVER OTIMIZADA (MODO TURBO) ---
+# --- CONFIGURAÇÃO DO DRIVER (MÁXIMA VELOCIDADE) ---
 def get_driver():
     chrome_options = webdriver.ChromeOptions()
-    
-    # 1. Configurações Básicas para Servidor
     chrome_options.add_argument("--headless=new") 
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # 2. BLOQUEIO DE IMAGENS E CSS (Acelera muito a busca)
+    # Bloqueio total de visual para economizar CPU
     prefs = {
-        "profile.managed_default_content_settings.images": 2,       # Bloqueia Imagens
-        "profile.managed_default_content_settings.stylesheets": 2,  # Bloqueia Estilos (CSS)
-        "profile.managed_default_content_settings.fonts": 2,        # Bloqueia Fontes
-        "profile.default_content_setting_values.notifications": 2,  # Bloqueia Notificações
-        "profile.managed_default_content_settings.popups": 2,       # Bloqueia Popups
+        "profile.managed_default_content_settings.images": 2,
+        "profile.managed_default_content_settings.stylesheets": 2,
+        "profile.managed_default_content_settings.fonts": 2,
+        "profile.default_content_setting_values.notifications": 2,
+        "profile.managed_default_content_settings.popups": 2,
     }
     chrome_options.add_experimental_option("prefs", prefs)
-    
-    # 3. Estratégia de Carregamento "Ansiosa"
-    # Não espera carregar scripts pesados de fundo, libera o robô assim que o HTML chega.
     chrome_options.page_load_strategy = 'eager'
 
-    # 4. Caminho do Chrome no Render
     if os.environ.get('RENDER'):
         chrome_binary_path = os.path.join(os.getcwd(), "chrome/opt/google/chrome/google-chrome")
         chrome_options.binary_location = chrome_binary_path
-        service = Service() # Selenium Manager cuida do driver
+        service = Service()
     else:
-        # Fallback para rodar no seu computador (se tiver webdriver-manager instalado)
         try:
             from webdriver_manager.chrome import ChromeDriverManager
             service = Service(ChromeDriverManager().install())
-        except:
-            service = Service()
+        except: service = Service()
     
     return webdriver.Chrome(service=service, options=chrome_options)
 
@@ -60,31 +52,29 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BD Manager - Web Turbo</title>
+    <title>BD Manager - Ultra Fast</title>
     <style>
         body { background-color: #121212; color: white; font-family: sans-serif; text-align: center; padding: 20px; }
         .card { background-color: #252525; padding: 20px; margin: 15px auto; max-width: 500px; border-radius: 10px; border: 1px solid #333; }
-        h1 { color: #E63946; }
-        h2 { border-bottom: 2px solid #E63946; display: inline-block; padding-bottom: 5px; margin-bottom: 20px; }
+        h1 { color: #00E676; }
+        h2 { border-bottom: 2px solid #00E676; display: inline-block; padding-bottom: 5px; margin-bottom: 20px; }
         input, button { width: 90%; padding: 12px; margin: 5px 0; border-radius: 5px; border: none; }
         input[type="text"], input[type="number"] { background: #1A1A1A; color: white; border: 1px solid #555; }
-        button { background-color: #E63946; color: white; font-weight: bold; cursor: pointer; transition: 0.3s; }
-        button:hover { background-color: #C42B37; }
+        button { background-color: #00E676; color: #000; font-weight: bold; cursor: pointer; transition: 0.3s; }
+        button:hover { background-color: #00C853; }
         .note { font-size: 0.8em; color: #aaa; margin-top: 5px; }
-        .loading { display: none; color: #ffeb3b; font-weight: bold; margin-top: 15px; animation: piscar 1.5s infinite;}
-        @keyframes piscar { 0% {opacity: 1;} 50% {opacity: 0.5;} 100% {opacity: 1;} }
+        .loading { display: none; color: #00E676; font-weight: bold; margin-top: 15px;}
     </style>
     <script>
         function showLoading() {
             document.getElementById('loading-msg').style.display = 'block';
-            document.getElementById('btn-buscar').innerText = "BUSCANDO... AGUARDE";
+            document.getElementById('btn-buscar').innerText = "PROCESSANDO...";
             document.getElementById('btn-buscar').disabled = true;
-            document.getElementById('btn-buscar').style.backgroundColor = "#555";
         }
     </script>
 </head>
 <body>
-    <h1>BD MANAGER <span style="font-size:12px">TURBO</span></h1>
+    <h1>BD MANAGER <span style="font-size:12px">ULTRA</span></h1>
 
     <div class="card">
         <h2>1. Nova Coleta</h2>
@@ -94,16 +84,14 @@ HTML_TEMPLATE = """
                 <label>Páginas:</label>
                 <input type="number" name="paginas" value="2" min="1" max="5" style="width: 60px;">
             </div>
-            <button type="submit" id="btn-buscar">🚀 BUSCAR RÁPIDO</button>
-            <p class="note">O robô está em modo rápido (sem imagens).</p>
-            <p id="loading-msg" class="loading">⏳ Processando... Isso leva cerca de 30-60 segundos.</p>
+            <button type="submit" id="btn-buscar">⚡ BUSCAR AGORA</button>
+            <p id="loading-msg" class="loading">⏳ Extraindo dados em alta velocidade...</p>
         </form>
     </div>
 
     <div class="card">
         <h2>2. Atualizar Preços</h2>
         <form action="/atualizar" method="post" enctype="multipart/form-data">
-            <label style="display:block; margin-bottom:5px;">Envie o JSON antigo:</label>
             <input type="file" name="arquivo" accept=".json" required style="background:transparent; border:none;">
             <button type="submit">🔄 ATUALIZAR PREÇOS</button>
         </form>
@@ -126,9 +114,8 @@ def index():
 
 @app.route('/coletar', methods=['GET', 'POST'])
 def rota_coleta():
-    if request.method == 'GET':
-        return redirect(url_for('index'))
-
+    if request.method == 'GET': return redirect(url_for('index'))
+    
     termo = request.form.get('termo')
     try: paginas = int(request.form.get('paginas'))
     except: paginas = 1
@@ -138,88 +125,103 @@ def rota_coleta():
     
     try:
         driver = get_driver()
-        url = f"https://www.leomadeiras.com.br/busca?q={termo}"
-        driver.get(url)
-        
-        # Tempo reduzido (sem imagens carrega rápido)
-        time.sleep(1.5)
+        driver.get(f"https://www.leomadeiras.com.br/busca?q={termo}")
+        time.sleep(1.5) # Espera inicial curta
         
         ids_vistos = set()
         
         for p in range(paginas):
-            # Scroll rápido
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
-            time.sleep(0.5)
+            # Scroll para forçar o carregamento dos itens (necessário pois o site usa Lazy Load)
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(1)
-
-            links = driver.find_elements(By.XPATH, "//a[contains(@href, '/p/')]")
+            time.sleep(1) # Espera o site reagir ao scroll
+            
+            # --- MÁGICA DE VELOCIDADE AQUI ---
+            # Em vez de pedir elemento por elemento ao Selenium, pegamos o HTML todo
+            # e processamos com BeautifulSoup (muito mais rápido)
+            html_content = driver.page_source
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Procura todos os links que parecem produtos
+            # O seletor 'a[href*="/p/"]' equivale ao XPath contains
+            links = soup.select('a[href*="/p/"]')
+            
             if not links: break
             
             for link in links:
                 try:
-                    href = link.get_attribute("href")
-                    if not href or href in ids_vistos: continue
+                    href = link.get('href')
+                    if not href: continue
+                    
+                    # Normaliza o link (às vezes vem relativo)
+                    if not href.startswith('http'):
+                        href = "https://www.leomadeiras.com.br" + href
+
+                    if href in ids_vistos: continue
                     ids_vistos.add(href)
                     
+                    # Extrai ID do link
                     match = re.search(r'/p/(\d+)', href)
                     codigo = match.group(1) if match else "S/C"
                     
-                    # Tenta pegar o nome (Texto direto é mais rápido que atributo)
-                    nome = link.text
+                    # Tenta pegar o nome (Texto do link ou Alt da imagem)
+                    nome = link.get_text(strip=True)
                     if not nome:
-                        try: nome = link.find_element(By.TAG_NAME, "img").get_attribute("alt")
-                        except: nome = "Produto sem nome"
+                        img = link.find('img')
+                        if img: nome = img.get('alt', '')
+                    if not nome: nome = "Produto sem nome"
                     
+                    # Lógica de Preço via BeautifulSoup (Ancestrais)
                     preco = "Consulte"
-                    try:
-                        bloco = link.find_element(By.XPATH, "./ancestor::div[3]")
-                        texto_bloco = bloco.text
+                    # Sobe 3 níveis na árvore do HTML (equivalente ao ancestor::div[3])
+                    parent = link.find_parent('div')
+                    if parent: parent = parent.find_parent('div')
+                    if parent: parent = parent.find_parent('div')
+                    
+                    if parent:
+                        texto_bloco = parent.get_text(" ", strip=True)
                         if "R$" in texto_bloco:
-                            linhas = texto_bloco.split('\n')
-                            for linha in linhas:
-                                if "R$" in linha and "à vista" not in linha:
-                                    preco = linha.strip().replace("R$", "").strip()
-                                    break
-                    except: pass
+                            # Procura o padrão de preço R$ 00,00
+                            match_preco = re.search(r'R\$\s?[\d\.,]+', texto_bloco)
+                            if match_preco:
+                                preco = match_preco.group(0)
 
                     produtos.append({
                         "id": codigo,
                         "nome": nome, 
-                        "preco": f"R$ {preco}", 
+                        "preco": preco, 
                         "link": href, 
                         "data_update": datetime.now().strftime("%d/%m/%Y")
                     })
                 except: continue
             
-            # Paginação
+            # Paginação via Selenium (só clica se precisar)
             if p < paginas - 1:
                 try:
-                    prox = driver.find_elements(By.XPATH, f"//a[text()='{p+2}']")
-                    if prox: 
-                        driver.execute_script("arguments[0].click();", prox[0])
-                        time.sleep(2) # Tempo seguro para troca de página
-                    else: break
+                    # Tenta encontrar botão da próxima página via JS do Selenium
+                    # O BS4 não clica, então voltamos ao driver rapidinho
+                    driver.execute_script(f"""
+                        var links = document.querySelectorAll('a');
+                        for (var i = 0; i < links.length; i++) {{
+                            if (links[i].innerText === '{p+2}') {{
+                                links[i].click();
+                                break;
+                            }}
+                        }}
+                    """)
+                    time.sleep(2)
                 except: break
-            
+
     except Exception as e:
         return f"<h1>Erro técnico:</h1><p>{str(e)}</p><a href='/'>Voltar</a>"
     finally:
-        if driver: 
-            driver.quit()
+        if driver: driver.quit()
 
     if produtos:
         buffer = io.BytesIO()
         buffer.write(json.dumps(produtos, indent=4, ensure_ascii=False).encode('utf-8'))
         buffer.seek(0)
-        return send_file(
-            buffer,
-            as_attachment=True,
-            download_name=f"coleta_{termo.replace(' ', '_')}.json",
-            mimetype='application/json'
-        )
-    else:
-        return "<h1>Nenhum produto encontrado.</h1><a href='/'>Voltar</a>"
+        return send_file(buffer, as_attachment=True, download_name=f"coleta_{termo}.json", mimetype='application/json')
+    return "<h1>Nada encontrado.</h1><a href='/'>Voltar</a>"
 
 @app.route('/atualizar', methods=['POST'])
 def rota_atualizar():
@@ -229,33 +231,31 @@ def rota_atualizar():
     try:
         dados = json.load(arquivo)
         driver = get_driver()
-        
-        # Limite de segurança para plano gratuito (evita timeout de 2min)
-        limite_itens = 40 
         contador = 0
         
         for produto in dados:
-            if contador >= limite_itens: break
+            if contador >= 50: break # Aumentei o limite um pouco
             try:
                 driver.get(produto['link'])
-                try:
-                    # Espera muito curta pois CSS/IMG estão bloqueados
-                    wait = webdriver.support.ui.WebDriverWait(driver, 3)
-                    preco_el = wait.until(lambda d: d.find_element(By.CLASS_NAME, "vtex-store-components-3-x-currencyContainer"))
-                    produto['preco'] = preco_el.text
+                # BeautifulSoup para ler o preço rápido
+                html = driver.page_source
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # Tenta achar o container de preço (classe do vtex)
+                preco_div = soup.find(class_="vtex-store-components-3-x-currencyContainer")
+                if preco_div:
+                    produto['preco'] = preco_div.get_text(strip=True)
                     produto['data_update'] = datetime.now().strftime("%d/%m/%Y")
-                except: pass
+                
                 contador += 1
             except: pass
         
         driver.quit()
-        
         buffer = io.BytesIO()
         buffer.write(json.dumps(dados, indent=4, ensure_ascii=False).encode('utf-8'))
         buffer.seek(0)
         return send_file(buffer, as_attachment=True, download_name="atualizado.json", mimetype='application/json')
-    except Exception as e:
-        return f"Erro: {e}"
+    except Exception as e: return f"Erro: {e}"
 
 @app.route('/unir', methods=['POST'])
 def rota_unir():
@@ -266,12 +266,10 @@ def rota_unir():
         try:
             dados = json.load(arq)
             for d in dados:
-                link = d.get('link')
-                if link not in vistos:
+                if d.get('link') not in vistos:
                     mega.append(d)
-                    vistos.add(link)
+                    vistos.add(d.get('link'))
         except: continue
-    
     buffer = io.BytesIO()
     buffer.write(json.dumps(mega, indent=4, ensure_ascii=False).encode('utf-8'))
     buffer.seek(0)
