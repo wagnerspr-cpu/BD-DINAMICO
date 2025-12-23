@@ -9,12 +9,12 @@ from flask import Flask, render_template_string, request, send_file
 # Selenium Imports
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
+# Nota: Removemos o import do webdriver_manager pois o Selenium novo faz isso sozinho
 
 app = Flask(__name__)
 
-# --- CONFIGURAÇÃO DO DRIVER (ATUALIZADA PARA O RENDER) ---
+# --- CONFIGURAÇÃO DO DRIVER (ATUALIZADA) ---
 def get_driver():
     chrome_options = webdriver.ChromeOptions()
     chrome_options.add_argument("--headless=new") 
@@ -23,15 +23,20 @@ def get_driver():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # SE ESTIVER NO RENDER (Identifica se está no servidor)
+    service = Service()
+
+    # SE ESTIVER NO RENDER
     if os.environ.get('RENDER'):
-        # Aponta para o Chrome extraído na pasta local do projeto
-        # O comando de build cria essa pasta 'chrome/opt/google/chrome/...'
+        # Aponta para o Chrome extraído na pasta local
         chrome_binary_path = os.path.join(os.getcwd(), "chrome/opt/google/chrome/google-chrome")
         chrome_options.binary_location = chrome_binary_path
+        
+        # IMPORTANTE: No Render, precisamos apontar onde o driver deve ser salvo/lido
+        # pois o Selenium Manager tenta baixar na pasta home e pode dar erro de permissão
+        # ou, se funcionar, ele detecta automaticamente baseado no binary_location acima.
     
-    # Instala o driver compatível e inicia
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+    # Cria o driver. O Selenium 4.16+ detecta o binary_location e baixa o driver correto sozinho.
+    return webdriver.Chrome(service=service, options=chrome_options)
 
 # --- INTERFACE WEB (HTML) ---
 HTML_TEMPLATE = """
@@ -113,7 +118,6 @@ def rota_coleta():
         ids_vistos = set()
         
         for p in range(paginas):
-            # Scroll
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
             time.sleep(1.5)
 
@@ -147,7 +151,6 @@ def rota_coleta():
                     })
                 except: continue
             
-            # Paginação
             try:
                 prox = driver.find_elements(By.XPATH, f"//a[text()='{p+2}']")
                 if prox: 
@@ -233,6 +236,5 @@ def rota_unir():
     return send_file(buffer, as_attachment=True, download_name=f"unificado_{int(time.time())}.json", mimetype='application/json')
 
 if __name__ == "__main__":
-    # Configuração da porta para o Render
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
