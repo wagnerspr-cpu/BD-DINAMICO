@@ -14,7 +14,7 @@ from selenium.webdriver.common.by import By
 
 app = Flask(__name__)
 
-# --- CONFIGURAÇÃO DO DRIVER (CORRIGIDA PARA O RENDER) ---
+# --- CONFIGURAÇÃO DO DRIVER (ATUALIZADA PARA O RENDER) ---
 def get_driver():
     chrome_options = webdriver.ChromeOptions()
     chrome_options.add_argument("--headless=new") 
@@ -23,12 +23,14 @@ def get_driver():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # SE ESTIVER RODANDO NO SERVIDOR DO RENDER
+    # SE ESTIVER NO RENDER (Identifica se está no servidor)
     if os.environ.get('RENDER'):
-        # Aponta para a pasta onde o "comando gigante" instalou o Chrome
+        # Aponta para o Chrome extraído na pasta local do projeto
+        # O comando de build cria essa pasta 'chrome/opt/google/chrome/...'
         chrome_binary_path = os.path.join(os.getcwd(), "chrome/opt/google/chrome/google-chrome")
         chrome_options.binary_location = chrome_binary_path
     
+    # Instala o driver compatível e inicia
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 
 # --- INTERFACE WEB (HTML) ---
@@ -111,7 +113,7 @@ def rota_coleta():
         ids_vistos = set()
         
         for p in range(paginas):
-            # Scroll para carregar itens
+            # Scroll
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
             time.sleep(1.5)
 
@@ -121,7 +123,6 @@ def rota_coleta():
             for link in links:
                 try:
                     href = link.get_attribute("href")
-                    # Evita duplicados e links inválidos
                     if not href or href in ids_vistos: continue
                     ids_vistos.add(href)
                     
@@ -134,7 +135,6 @@ def rota_coleta():
                     try:
                         bloco = link.find_element(By.XPATH, "./ancestor::div[3]")
                         if "R$" in bloco.text:
-                            # Pega o preço limpo
                             preco = bloco.text.split("R$")[1].split("\n")[0].strip()
                     except: pass
 
@@ -147,9 +147,8 @@ def rota_coleta():
                     })
                 except: continue
             
-            # Tenta ir para a próxima página
+            # Paginação
             try:
-                # Procura botão da página seguinte (ex: se estou na 1, procuro o 2)
                 prox = driver.find_elements(By.XPATH, f"//a[text()='{p+2}']")
                 if prox: 
                     driver.execute_script("arguments[0].click();", prox[0])
@@ -189,7 +188,6 @@ def rota_atualizar():
             try:
                 driver.get(produto['link'])
                 try:
-                    # Espera rápida para ver se o preço aparece
                     wait = webdriver.support.ui.WebDriverWait(driver, 5)
                     preco_el = wait.until(lambda d: d.find_element(By.CLASS_NAME, "vtex-store-components-3-x-currencyContainer"))
                     novo_preco = preco_el.text
@@ -199,20 +197,14 @@ def rota_atualizar():
                 produto['preco'] = novo_preco
                 produto['data_update'] = datetime.now().strftime("%d/%m/%Y")
             except:
-                pass # Mantém o antigo se der erro
+                pass
         
         driver.quit()
         
         buffer = io.BytesIO()
         buffer.write(json.dumps(dados, indent=4, ensure_ascii=False).encode('utf-8'))
         buffer.seek(0)
-        
-        return send_file(
-            buffer,
-            as_attachment=True,
-            download_name=f"atualizado_{int(time.time())}.json",
-            mimetype='application/json'
-        )
+        return send_file(buffer, as_attachment=True, download_name=f"atualizado_{int(time.time())}.json", mimetype='application/json')
     except Exception as e:
         return f"Erro ao atualizar: {str(e)}"
 
@@ -229,7 +221,6 @@ def rota_unir():
         try:
             dados = json.load(arquivo)
             for item in dados:
-                # Usa o link ou ID como chave única
                 chave = item.get('id', item.get('link'))
                 if chave not in ids_existentes:
                     mega_lista.append(item)
@@ -239,15 +230,9 @@ def rota_unir():
     buffer = io.BytesIO()
     buffer.write(json.dumps(mega_lista, indent=4, ensure_ascii=False).encode('utf-8'))
     buffer.seek(0)
-    
-    return send_file(
-        buffer,
-        as_attachment=True,
-        download_name=f"unificado_{int(time.time())}.json",
-        mimetype='application/json'
-    )
+    return send_file(buffer, as_attachment=True, download_name=f"unificado_{int(time.time())}.json", mimetype='application/json')
 
 if __name__ == "__main__":
-    # Importante: Pega a porta do Render ou usa 5000 localmente
+    # Configuração da porta para o Render
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
