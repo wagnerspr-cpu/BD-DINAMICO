@@ -14,17 +14,23 @@ from selenium.webdriver.common.by import By
 
 app = Flask(__name__)
 
-# --- CONFIGURAÇÃO DO DRIVER (HEADLESS) ---
+# --- CONFIGURAÇÃO DO DRIVER ATUALIZADA ---
 def get_driver():
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-blink-features=AutomationControlled") 
-    options.add_argument("--log-level=3")
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    chrome_options = webdriver.ChromeOptions()
+    chrome_options.add_argument("--headless=new") 
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+    
+    # SE ESTIVER RODANDO NO RENDER, USA O CAMINHO ESPECÍFICO
+    if os.environ.get('RENDER'):
+        chrome_binary_path = "/opt/render/project/.render/chrome/opt/google/chrome/google-chrome"
+        chrome_options.binary_location = chrome_binary_path
+    
+    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 
+# ... (O RESTO DO CÓDIGO CONTINUA IGUAL A ANTES) ...
 # --- INTERFACE WEB (HTML) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -42,28 +48,38 @@ HTML_TEMPLATE = """
         input[type="text"], input[type="number"] { background: #1A1A1A; color: white; border: 1px solid #555; }
         button { background-color: #E63946; color: white; font-weight: bold; cursor: pointer; transition: 0.3s; }
         button:hover { background-color: #C42B37; }
+        .note { font-size: 0.8em; color: #aaa; margin-top: 5px; }
     </style>
 </head>
 <body>
     <h1>BD MANAGER <span style="font-size:12px">WEB</span></h1>
+
     <div class="card">
         <h2>1. Nova Coleta</h2>
         <form action="/coletar" method="post">
             <input type="text" name="termo" placeholder="Ex: MDF Branco" required>
-            <input type="number" name="paginas" value="3" min="1" max="5">
+            <div style="display:flex; justify-content:center; gap:10px; align-items:center;">
+                <label>Páginas:</label>
+                <input type="number" name="paginas" value="3" min="1" max="5" style="width: 60px;">
+            </div>
             <button type="submit">🔍 BUSCAR E BAIXAR JSON</button>
+            <p class="note">Isso pode levar alguns segundos. Não feche a página.</p>
         </form>
     </div>
+
     <div class="card">
         <h2>2. Atualizar Preços</h2>
         <form action="/atualizar" method="post" enctype="multipart/form-data">
+            <label style="display:block; margin-bottom:5px;">Envie o JSON antigo:</label>
             <input type="file" name="arquivo" accept=".json" required style="background:transparent; border:none;">
             <button type="submit">🔄 ATUALIZAR PREÇOS</button>
         </form>
     </div>
+
     <div class="card">
         <h2>3. Unir Arquivos</h2>
         <form action="/unir" method="post" enctype="multipart/form-data">
+            <label style="display:block; margin-bottom:5px;">Selecione vários JSONs:</label>
             <input type="file" name="arquivos" accept=".json" multiple required style="background:transparent; border:none;">
             <button type="submit">🔗 UNIR ARQUIVOS</button>
         </form>
