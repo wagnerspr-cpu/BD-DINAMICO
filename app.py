@@ -14,7 +14,7 @@ from selenium.webdriver.common.by import By
 
 app = Flask(__name__)
 
-# --- CONFIGURAÇÃO DO DRIVER ATUALIZADA ---
+# --- CONFIGURAÇÃO DO DRIVER (CORRIGIDA PARA O RENDER) ---
 def get_driver():
     chrome_options = webdriver.ChromeOptions()
     chrome_options.add_argument("--headless=new") 
@@ -23,14 +23,14 @@ def get_driver():
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # SE ESTIVER RODANDO NO RENDER, USA O CAMINHO ESPECÍFICO
+    # SE ESTIVER RODANDO NO SERVIDOR DO RENDER
     if os.environ.get('RENDER'):
-        chrome_binary_path = "/opt/render/project/.render/chrome/opt/google/chrome/google-chrome"
+        # Aponta para a pasta onde o "comando gigante" instalou o Chrome
+        chrome_binary_path = os.path.join(os.getcwd(), "chrome/opt/google/chrome/google-chrome")
         chrome_options.binary_location = chrome_binary_path
     
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 
-# ... (O RESTO DO CÓDIGO CONTINUA IGUAL A ANTES) ...
 # --- INTERFACE WEB (HTML) ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -92,6 +92,7 @@ HTML_TEMPLATE = """
 def index():
     return render_template_string(HTML_TEMPLATE)
 
+# ================= 1. ROTA DE COLETA =================
 @app.route('/coletar', methods=['POST'])
 def rota_coleta():
     termo = request.form.get('termo')
@@ -100,35 +101,55 @@ def rota_coleta():
     
     driver = None
     produtos = []
+    
     try:
         driver = get_driver()
-        driver.get(f"https://www.leomadeiras.com.br/busca?q={termo}")
+        url = f"https://www.leomadeiras.com.br/busca?q={termo}"
+        driver.get(url)
         time.sleep(2)
+        
         ids_vistos = set()
         
         for p in range(paginas):
+            # Scroll para carregar itens
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
             time.sleep(1.5)
+
             links = driver.find_elements(By.XPATH, "//a[contains(@href, '/p/')]")
             if not links: break
             
             for link in links:
                 try:
                     href = link.get_attribute("href")
-                    if href in ids_vistos: continue
+                    # Evita duplicados e links inválidos
+                    if not href or href in ids_vistos: continue
                     ids_vistos.add(href)
                     
+                    match = re.search(r'/p/(\d+)', href)
+                    codigo = match.group(1) if match else "S/C"
+                    
                     nome = link.text or link.find_element(By.TAG_NAME, "img").get_attribute("alt")
+                    
                     preco = "Consulte"
                     try:
                         bloco = link.find_element(By.XPATH, "./ancestor::div[3]")
-                        if "R$" in bloco.text: preco = bloco.text.split("R$")[1].split("\n")[0].strip()
+                        if "R$" in bloco.text:
+                            # Pega o preço limpo
+                            preco = bloco.text.split("R$")[1].split("\n")[0].strip()
                     except: pass
-                    
-                    produtos.append({"nome": nome, "preco": f"R$ {preco}", "link": href, "data": datetime.now().strftime("%d/%m/%Y")})
+
+                    produtos.append({
+                        "id": codigo,
+                        "nome": nome, 
+                        "preco": f"R$ {preco}" if "Consulte" not in preco else preco, 
+                        "link": href, 
+                        "data_update": datetime.now().strftime("%d/%m/%Y")
+                    })
                 except: continue
             
+            # Tenta ir para a próxima página
             try:
+                # Procura botão da página seguinte (ex: se estou na 1, procuro o 2)
                 prox = driver.find_elements(By.XPATH, f"//a[text()='{p+2}']")
                 if prox: 
                     driver.execute_script("arguments[0].click();", prox[0])
@@ -136,7 +157,8 @@ def rota_coleta():
                 else: break
             except: break
             
-    except Exception as e: return f"Erro: {str(e)}"
+    except Exception as e:
+        return f"<h1>Erro:</h1><p>{str(e)}</p>"
     finally:
         if driver: driver.quit()
 
@@ -144,48 +166,88 @@ def rota_coleta():
         buffer = io.BytesIO()
         buffer.write(json.dumps(produtos, indent=4, ensure_ascii=False).encode('utf-8'))
         buffer.seek(0)
-        return send_file(buffer, as_attachment=True, download_name=f"coleta_{termo}.json", mimetype='application/json')
-    return "Nada encontrado <a href='/'>Voltar</a>"
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=f"coleta_{termo.replace(' ', '_')}.json",
+            mimetype='application/json'
+        )
+    else:
+        return "<h1>Nenhum produto encontrado.</h1><a href='/'>Voltar</a>"
 
+# ================= 2. ROTA DE ATUALIZAR =================
 @app.route('/atualizar', methods=['POST'])
 def rota_atualizar():
     arquivo = request.files.get('arquivo')
-    if not arquivo: return "Erro"
-    dados = json.load(arquivo)
-    driver = get_driver()
-    try:
-        for p in dados:
-            try:
-                driver.get(p['link'])
-                time.sleep(1) # Rapido
-                p['data'] = datetime.now().strftime("%d/%m/%Y")
-            except: pass
-    finally: driver.quit()
-    
-    buffer = io.BytesIO()
-    buffer.write(json.dumps(dados, indent=4, ensure_ascii=False).encode('utf-8'))
-    buffer.seek(0)
-    return send_file(buffer, as_attachment=True, download_name="atualizado.json", mimetype='application/json')
+    if not arquivo: return "Erro: Nenhum arquivo enviado"
 
+    try:
+        dados = json.load(arquivo)
+        driver = get_driver()
+        
+        for produto in dados:
+            try:
+                driver.get(produto['link'])
+                try:
+                    # Espera rápida para ver se o preço aparece
+                    wait = webdriver.support.ui.WebDriverWait(driver, 5)
+                    preco_el = wait.until(lambda d: d.find_element(By.CLASS_NAME, "vtex-store-components-3-x-currencyContainer"))
+                    novo_preco = preco_el.text
+                except:
+                    novo_preco = "Indisponível"
+                
+                produto['preco'] = novo_preco
+                produto['data_update'] = datetime.now().strftime("%d/%m/%Y")
+            except:
+                pass # Mantém o antigo se der erro
+        
+        driver.quit()
+        
+        buffer = io.BytesIO()
+        buffer.write(json.dumps(dados, indent=4, ensure_ascii=False).encode('utf-8'))
+        buffer.seek(0)
+        
+        return send_file(
+            buffer,
+            as_attachment=True,
+            download_name=f"atualizado_{int(time.time())}.json",
+            mimetype='application/json'
+        )
+    except Exception as e:
+        return f"Erro ao atualizar: {str(e)}"
+
+# ================= 3. ROTA DE UNIR =================
 @app.route('/unir', methods=['POST'])
 def rota_unir():
     arquivos = request.files.getlist('arquivos')
-    mega = []
-    vistos = set()
-    for arq in arquivos:
-        try:
-            dados = json.load(arq)
-            for d in dados:
-                if d.get('link') not in vistos:
-                    mega.append(d)
-                    vistos.add(d.get('link'))
-        except: continue
+    if not arquivos: return "Erro: Nenhum arquivo enviado"
+
+    mega_lista = []
+    ids_existentes = set()
     
+    for arquivo in arquivos:
+        try:
+            dados = json.load(arquivo)
+            for item in dados:
+                # Usa o link ou ID como chave única
+                chave = item.get('id', item.get('link'))
+                if chave not in ids_existentes:
+                    mega_lista.append(item)
+                    ids_existentes.add(chave)
+        except: continue
+
     buffer = io.BytesIO()
-    buffer.write(json.dumps(mega, indent=4, ensure_ascii=False).encode('utf-8'))
+    buffer.write(json.dumps(mega_lista, indent=4, ensure_ascii=False).encode('utf-8'))
     buffer.seek(0)
-    return send_file(buffer, as_attachment=True, download_name="unificado.json", mimetype='application/json')
+    
+    return send_file(
+        buffer,
+        as_attachment=True,
+        download_name=f"unificado_{int(time.time())}.json",
+        mimetype='application/json'
+    )
 
 if __name__ == "__main__":
+    # Importante: Pega a porta do Render ou usa 5000 localmente
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
